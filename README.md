@@ -1,5 +1,5 @@
 # iotc-file-transfer
-# Transferring large payloads (files) up to IoT Central using the Azure device SDK and a single MQTT connection
+# Transferring large payloads (files) up to IoT Central using the Azure IoT device SDK and a single MQTT connection
 
 ## Description
 
