@@ -255,4 +255,23 @@ The code can then be run either from within Visual Studio Code or the command li
 python send_files.py
 ```
 
-After running the above 
+Running the above code will push three large payloads through IoT Central to the cloud.
+
+|File|Size|Compressed|Description|
+|----|----|----------|-----------|
+|4k-image.jpg|3,914KB|no|a large jpeg image|
+|large-pdf.pdf|10,386KB|yes|a large pdf file with images in it|
+|video.mp4|10,300KB|yes|an mp4 encoded video file with sound|
+
+Once the files have been pushed to the cloud they can be viewed at  https://<name of your azure function>.scm.azurewebsites.net/ 
+
+![uploaded files in the cloud](./assets/images/files.png)
+
+Note that the temporary files in the temp-uploads directory will automatically be deleted once they have been rehydrated into a complete file.  If there is an error such as a part missing or an error in the payload structure then the files will remain and will be cleaned up a couple of hours after into the dead-letter directory so they can be looked at for issues.
+
+## Potential future features
+
+Ultimately we would like this feature to be fully integrated into IoT Central so that the data export and the Azure Function are not needed.  The data format of the message would be the same with the addition of the capability to send binary data so the need for base64 encoding/decoding would not be needed and the payloads would be smaller.
+
+It should also be a fairly trivial exercise to push the rehydrated files to an Azure File Share instead of leaving them on the Azure Function file system as they are in this example.
+
