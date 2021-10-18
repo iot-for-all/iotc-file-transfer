@@ -171,15 +171,14 @@ def main():
     if connect():
         local_upload_dir = "./sample-upload-files/"
 
-        for i in range(0, 10):
-            # send an mp4 video file with compression
-            send_file(local_upload_dir + "video.mp4", "myDevice\\video\\video.mp4", True)
+        # send an mp4 video file with compression
+        send_file(local_upload_dir + "video.mp4", "myDevice\\video\\video.mp4", True)
 
-            # send a pdf file with compression
-            send_file(local_upload_dir + "large-pdf.pdf", "myDevice\\pdf\\large-pdf.pdf", True) # 10,386KB
+        # send a pdf file with compression
+        send_file(local_upload_dir + "large-pdf.pdf", "myDevice\\pdf\\large-pdf.pdf", True) # 10,386KB
 
-            # send a jpg file without compression
-            send_file(local_upload_dir + "4k-image.jpg", "myDevice/images/4k-image.jpg", False) # 3,914KB
+        # send a jpg file without compression
+        send_file(local_upload_dir + "4k-image.jpg", "myDevice/images/4k-image.jpg", False) # 3,914KB
 
         # disconnect from IoT hub/central
         print("Disconnecting from IoT Hub/Central")
