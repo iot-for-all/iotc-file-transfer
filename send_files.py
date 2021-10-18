@@ -12,8 +12,8 @@ from azure.iot.device import Message
 from azure.iot.device import exceptions
 
 # device settings - FILL IN YOUR VALUES HERE
-scope_id = "<scope id for IoT Central Application"
-group_symmetric_key = "Group SAS key for IoT Central Application"
+scope_id = "<scope id for IoT Central Application>"
+group_symmetric_key = "<Group SAS key for IoT Central Application>"
 
 # optional device settings - CHANGE IF DESIRED/NECESSARY
 provisioning_host = "global.azure-devices-provisioning.net"
