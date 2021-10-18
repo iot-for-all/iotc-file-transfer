@@ -10,7 +10,7 @@ This sample shows how you can push large payloads up to IoT central using the st
 ## How it works
 
 ### From the device side
-The device connects to IoT Central just as it would to send regular telemetry.  This can be via the standard transports of MQTT, AMQP, or HTTPS.  We recommend using MQTT for devices as it provides access to all the communication features of IoT Central.  Once connected the device can send telemetry and properties as normal.  When a large payload needs to be transmitted to IoT Central it is chunked into smaller payloads of 255KB and custom message properties are applid to the payloads indicating the file properties.
+The device connects to IoT Central just as it would to send regular telemetry.  This can be via the standard transports of MQTT, AMQP, or HTTPS.  We recommend using MQTT for devices as it provides access to all the communication features of IoT Central.  Once connected the device can send telemetry and properties as normal.  When a large payload needs to be transmitted to IoT Central it is chunked into smaller payloads of 255KB and custom message properties are applied to the payloads indicating the file properties.
 
 The message structure is as follows:
 
