@@ -1,0 +1,106 @@
+[
+  {
+    "@id": "dtmi:sample:fileTransfer;1",
+    "@type": "Interface",
+    "contents": [],
+    "displayName": {
+      "en": "File Transfer"
+    },
+    "extends": [
+      "dtmi:sample:multipartTransfer;1",
+      "dtmi:sample:fileTransferStatus;1"
+    ],
+    "@context": [
+      "dtmi:iotcentral:context;2",
+      "dtmi:dtdl:context;2"
+    ]
+  },
+  {
+    "@context": [
+      "dtmi:iotcentral:context;2",
+      "dtmi:dtdl:context;2"
+    ],
+    "@id": "dtmi:sample:multipartTransfer;1",
+    "@type": [
+      "Interface",
+      "NamedInterface"
+    ],
+    "contents": [
+      {
+        "@id": "dtmi:sample:multipartTransfer:data;1",
+        "@type": "Telemetry",
+        "displayName": {
+          "en": "data"
+        },
+        "name": "data",
+        "schema": "string"
+      }
+    ],
+    "displayName": {
+      "en": "MultipartTransfer"
+    },
+    "name": "multipartTransfer"
+  },
+  {
+    "@context": [
+      "dtmi:iotcentral:context;2",
+      "dtmi:dtdl:context;2"
+    ],
+    "@id": "dtmi:sample:fileTransferStatus;1",
+    "@type": [
+      "Interface",
+      "NamedInterface"
+    ],
+    "contents": [
+      {
+        "@id": "dtmi:sample:fileTransferStatus:filename;1",
+        "@type": "Telemetry",
+        "displayName": {
+          "en": "File name"
+        },
+        "name": "filename",
+        "schema": "string"
+      },
+      {
+        "@id": "dtmi:sample:fileTransferStatus:filepath;1",
+        "@type": "Telemetry",
+        "displayName": {
+          "en": "File path"
+        },
+        "name": "filepath",
+        "schema": "string"
+      },
+      {
+        "@id": "dtmi:sample:fileTransferStatus:status;1",
+        "@type": "Telemetry",
+        "displayName": {
+          "en": "Status"
+        },
+        "name": "status",
+        "schema": "integer"
+      },
+      {
+        "@id": "dtmi:sample:fileTransferStatus:message;1",
+        "@type": "Telemetry",
+        "displayName": {
+          "en": "Status message"
+        },
+        "name": "message",
+        "schema": "string"
+      },
+      {
+        "@id": "dtmi:sample:fileTransferStatus:size;1",
+        "@type": "Telemetry",
+        "displayName": {
+          "en": "Size (KB)"
+        },
+        "name": "size",
+        "schema": "double"
+      }
+    ],
+    "displayName": {
+      "en": "File Transfer Status"
+    },
+    "name": "fileTtransferStatus"
+  }
+]
