@@ -50,7 +50,7 @@ module.exports = async function (context, req) {
             throw "Missing message property: id";
         }
 
-        if ("id" in req.body.messageProperties) {
+        if ("filepath" in req.body.messageProperties) {
             filepath = path.normalize(req.body.messageProperties.filepath);
             filename = path.basename(filepath);
             filepath = path.dirname(filepath);
@@ -83,7 +83,7 @@ module.exports = async function (context, req) {
         context.log.info("device-id: " + deviceId + " file-id: " + id + " part: " + part + " of: " + maxPart.toString() + " filepath: " + filepath + " filename: " + filename);
 
         // write out the file part
-        fs.writeFileSync(path.join(tempDir, (deviceId + "." + id + "." + maxPart + "." + part)), req.body.telemetry.contentChunk);
+        fs.writeFileSync(path.join(tempDir, (deviceId + "." + id + "." + maxPart + "." + part)), req.body.telemetry.data);
 
         // check to see if all the file parts are available
         let filePartCount = glob.sync(path.join(tempDir, (deviceId + "." + id + ".*"))).length;
@@ -125,9 +125,12 @@ module.exports = async function (context, req) {
                     // pause and try this again incase there was a delay in releasing the file lock
                     try {
                         context.log.warn("Failure whilst cleaning up a temporary file retrying: " + path.join(tempDir, (deviceId + "." + id + "." + maxPart + "." + i.toString())));
-                        setTimeout(() => {
-                            fs.unlinkSync(path.join(tempDir, (deviceId + "." + id + "." + maxPart + "." + i.toString())));
-                        }, 1000);
+                        await new Promise((resolve) => {
+                            setTimeout(() => {
+                                fs.unlinkSync(path.join(tempDir, (deviceId + "." + id + "." + maxPart + "." + i.toString())));
+                                return resolve();
+                            }, 1000);    
+                        });
                     } catch(e) {
                         // failed a second time so log the error, the file will be caught and dead lettered at a later time
                         context.log.error("Error whilst cleaning up a temporary file: " + path.join(tempDir, (deviceId + "." + id + "." + maxPart + "." + i.toString())));
