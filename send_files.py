@@ -12,8 +12,8 @@ from azure.iot.device import Message
 from azure.iot.device import exceptions
 
 # device settings - FILL IN YOUR VALUES HERE
-scope_id = ""
-group_symmetric_key = ""
+scope_id = "<insert scope id>"
+group_symmetric_key = "<insert symmetric key>"
 
 # optional device settings - CHANGE IF DESIRED/NECESSARY
 provisioning_host = "global.azure-devices-provisioning.net"
@@ -27,7 +27,6 @@ terminate = False
 trying_to_connect = False
 max_connection_attempt = 3
 verbose_logging = False
-# chunk_size_kb = 190 * 1024
 max_msg_size = 255 * 1024
 encoding_size_multiplier = 0.75
 compress_size_multipler = 0.05
@@ -52,14 +51,16 @@ def read_file_in_chunks(file, size):
 # Send a file over the IoT Hub transport to IoT Central
 def send_file(filename, upload_filepath, compress):
     f = open(filename, "rb")
-     # chunk the file payload into 255KB chunks to send to IoT central over MQTT (could also be AMQP or HTTPS)
+    # chunk the file payload into 255KB chunks to send to IoT central over MQTT (could also be AMQP or HTTPS)
     status = 200
     status_message = "completed"
     part = 1
     file_id = uuid.uuid4()
     msg_template_size = len(multipart_msg_schema)
     max_content_size = max_msg_size - msg_template_size
-    # TODO: add buffer for possible compression size growth?
+    # When encoding to base64, payload size grows by ~4/3.
+    # When using zlib compression, it's possible it can't compress at all, but still adds overhead of compression metadata.
+    # Need to account for both of these factors when determining payload size.
     multiplier = encoding_size_multiplier - compress_size_multipler if compress else encoding_size_multiplier
     chunk_size_kb = math.floor(max_content_size * multiplier)
 
@@ -70,10 +71,6 @@ def send_file(filename, upload_filepath, compress):
         else:
             data_compressed = data_chunk
 
-        # encode the data with base64 for transmission as a JSON string
-        # if(len(data_compressed) > len(data_chunk)):
-        #     print("compression failed")
-
         data_base64 = base64.b64encode(data_compressed).decode("ASCII")
         if(len(data_base64) > max_content_size):
             status_message = "encoded chunk size greater than max allowed size"
@@ -81,7 +78,6 @@ def send_file(filename, upload_filepath, compress):
             status = 500
             break
 
-        # print(data_base64)
         payload = multipart_msg_schema.format(data_base64)
 
         if device_client and device_client.connected:
@@ -101,7 +97,6 @@ def send_file(filename, upload_filepath, compress):
             msg.custom_properties["id"] = file_id  # unique identity for the multi-part message we suggest using a UUID
             msg.custom_properties["filepath"] = upload_filepath # file path for the final file, the path will be appended to the base recievers path
             msg.custom_properties["part"] = str(part)  # part N to track ordring of the parts
-            # msg.custom_properties["maxPart"] = str(max_parts);   # maximum number of parts in the set
             
             try:
                 device_client.send_message(msg)
@@ -117,8 +112,7 @@ def send_file(filename, upload_filepath, compress):
     file_size_kb = math.ceil(f.tell() / 1024)
     f.close()
     
-    # send a file transfer status message to IoT Central over MQTT
-    
+    # send a file transfer confirmation message to IoT Central over MQTT
     payload = f'{{"filename": "{filename}", "filepath": "{upload_filepath}", "status": {status}, "message": "{status_message}", "size": {file_size_kb}}}'
     print("Start sending final message part")
     msg = Message(payload)

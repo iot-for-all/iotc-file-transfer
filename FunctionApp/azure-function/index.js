@@ -23,6 +23,68 @@ module.exports = async function (context, req) {
 
     try {
         context.log.info('checking directory existence');
+        createDirectoriesIfNotExist();
+
+        // pull the message part meta data from the message properties
+        context.log.info('checking request properties');
+        const [deviceId, id, filepath, filename, part, maxPart, compression] = getRequestProperties(context, req);
+        const confirmationFile = path.join(tempDir, (deviceId + "." + id + ".confirm"));
+
+        // log new file part
+        context.log.info("device-id: " + deviceId + " file-id: " + id + " part: " + part + " filepath: " + filepath + " filename: " + filename);
+        // only the confirmation message will contain the maxPart field
+        if(maxPart === 0) {
+            context.log.info('writing file chunk');
+            fs.writeFileSync(path.join(tempDir, (deviceId + "." + id + "." + part)), req.body.telemetry.data);
+            context.log.info('write complete');
+
+            if(fs.existsSync(confirmationFile)){
+                // it is possible that the function processes a chunk message AFTER it has received the confirmation message if they arrived out of order.
+                const confirmData = fs.readFileSync(confirmationFile, {encoding:'utf8', flag:'r'});
+                context.log.info(`confirmation file read: ${confirmData}`);
+                const confirmDataParsed = JSON.parse(confirmData);
+
+                let filePartCount = glob.sync(path.join(tempDir, (deviceId + "." + id + ".*"))).length;
+                if (filePartCount === confirmDataParsed.maxPart) {
+                    // if this message was the last message in the multi-part, proceed to aggregate.
+                    await aggregateChunks(context, deviceId, id, confirmDataParsed.maxPart, confirmDataParsed.compression, filepath, filename, confirmationFile);
+                }
+            }
+        } else {
+            context.log.info('processing final message');
+            
+            context.log.info('writing confirmation file');
+            // save confirmation information to file in case it arrived out of order.
+            fs.writeFileSync(confirmationFile, JSON.stringify({maxPart, compression}));
+            context.log.info('write complete');
+
+            // check to see if all the file parts are available
+            let filePartCount = glob.sync(path.join(tempDir, (deviceId + "." + id + ".*"))).length;
+            if (filePartCount === maxPart) {
+                // if this message was the last message in the multi-part, proceed to aggregate.
+                await aggregateChunks(context, deviceId, id, maxPart, compression, filepath, filename, confirmationFile);
+            } else {
+                context.log.warn(`Missing message part. received ${filePartCount}, expected ${maxPart}`);
+            }
+        }
+        
+        // check for expired files in temp directory and dead letter them
+        cleanupDeadletter();
+    } catch (e) {
+        // log any exceptions as errors
+        context.log.error("Exception thrown: " + e);
+        error_message = e;
+        status_code = 500;
+    } finally {
+        // return success or failure
+        context.res = {
+            status: status_code,
+            body: error_message
+        };
+        context.done();
+    }
+
+    function createDirectoriesIfNotExist() {
         // make sure the needed directories are available
         if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir, { recursive: true });
@@ -33,8 +95,11 @@ module.exports = async function (context, req) {
         if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
         }
+    }
 
+    function getRequestProperties(context, req) {
         // pull the message part meta data from the message properties
+        let deviceId = "";
         let id = "";
         let filepath = "";
         let filename = "";
@@ -42,16 +107,13 @@ module.exports = async function (context, req) {
         let maxPart = 0;
         let compression = "none";
 
-        let deviceId = "";
-
-        context.log.info('checking request properties');
+        // check to make sure all the needed message properties have been sent
         if ("deviceId" in req.body) {
-            id = req.body.deviceId;
+            deviceId = req.body.deviceId;
         } else {
             throw "Missing body property: deviceId";
         }
-
-        // check to make sure all the needed message properties have been sent
+        
         if ("id" in req.body.messageProperties) {
             id = req.body.messageProperties.id;
         } else {
@@ -72,54 +134,22 @@ module.exports = async function (context, req) {
             throw "Missing message property: part";
         }
 
+        // check if optional message properties have been sent
         if ("maxPart" in req.body.messageProperties) {
             maxPart = Number(req.body.messageProperties.maxPart);
         }
 
-        // log new file part
-        context.log.info("device-id: " + deviceId + " file-id: " + id + " part: " + part + " filepath: " + filepath + " filename: " + filename);
-        let confirmationFile = path.join(tempDir, (deviceId + "." + id + ".confirm"));
-        // write out the file part if it is not the confirmation message
-        if(maxPart === 0) {
-            context.log.info('writing file');
-            fs.writeFileSync(path.join(tempDir, (deviceId + "." + id + "." + part)), req.body.telemetry.data);
-            context.log.info('write complete');
-
-            if(fs.existsSync(confirmationFile)){
-                let confirmData = fs.readFileSync(confirmationFile, {encoding:'utf8', flag:'r'});
-                context.log.info(`confirmation file read: ${confirmData}`);
-                confrimDataParsed = JSON.parse(confirmData);
-
-                let filePartCount = glob.sync(path.join(tempDir, (deviceId + "." + id + ".*"))).length;
-                if (filePartCount === confrimDataParsed.maxPart) {
-                    await aggregateChunks(context, deviceId, id, confrimDataParsed.maxPart, confrimDataParsed.compression, filepath, filename, confirmationFile);
-                }
-            }
-        } else {
-            context.log.info('processing final message');
-            if ("compression" in req.body.messageProperties) {
-                compression = req.body.messageProperties.compression.toLowerCase();
-                if (compression != "none" && compression != "deflate") {
-                    context.log("compression message property is invalid, received: " + compression);
-                }
-            } else {
-                throw "Missing message property: compression";
-            }
-
-            context.log.info('writing file');
-            fs.writeFileSync(confirmationFile, JSON.stringify({maxPart, compression}));
-            context.log.info('write complete');
-
-            // check to see if all the file parts are available
-            let filePartCount = glob.sync(path.join(tempDir, (deviceId + "." + id + ".*"))).length;
-            if (filePartCount === maxPart) {
-                await aggregateChunks(context, deviceId, id, maxPart, compression, filepath, filename, confirmationFile);
-            } else {
-                context.log.warn(`Missing message part. received ${filePartCount}, expected ${maxPart}`);
+        if ("compression" in req.body.messageProperties) {
+            compression = req.body.messageProperties.compression.toLowerCase();
+            if (compression != "none" && compression != "deflate") {
+                context.log.error("compression message property is invalid, received: " + compression);
             }
         }
-        
-        // check for expired files in temp directory and dead letter them
+
+        return [deviceId, id, filepath, filename, part, maxPart, compression];
+    }
+
+    function cleanupDeadletter() {
         let files = fs.readdirSync(tempDir);
         let dt = new Date();
         dt.setHours(dt.getHours() - deadLetterExpireTimeInHours);
@@ -135,23 +165,9 @@ module.exports = async function (context, req) {
                 context.log.warn("Exception occured during dead-letter cleanup. Details: " + e)
             }
         });
-    } catch (e) {
-        // log any exceptions as errors
-        context.log.error("Exception thrown: " + e);
-        error_message = e;
-        status_code = 500;
-    } finally {
-        // return success or failure
-        context.res = {
-            status: status_code,
-            body: error_message
-        };
-        context.done();
     }
 
     async function aggregateChunks(context, deviceId, id, maxPart, compression, filepath, filename, confirmationFile) {
-         // all expected file parts are available - time to rehydrate the file
-        // let encodedData = "";
         context.log.info('all chunks in temp storage. Reassembling.');
         const fullUploadDir = path.join(uploadDir, filepath);
         if (!fs.existsSync(fullUploadDir)) {
@@ -162,32 +178,36 @@ module.exports = async function (context, req) {
         if (fs.existsSync(path.join(fullUploadDir, filename))) {
             context.log.warn('file exists. creating revision');
             // create a revision number between filename and extension
-            ext = path.extname(filename);
+            const ext = path.extname(filename);
             filenameToWrite = filename.split('.').slice(0, -1).join('.');
-            let filesExistingCount = glob.sync(path.join(fullUploadDir, (filenameToWrite + ".**" + ext))).length;
+            const filesExistingCount = glob.sync(path.join(fullUploadDir, (filenameToWrite + ".**" + ext))).length;
             filenameToWrite = filenameToWrite + "." + (filesExistingCount + 1).toString() + ext;
         }
 
         context.log.info('creating and writing file stream');
-        var stream = fs.createWriteStream(path.join(fullUploadDir, filenameToWrite), {flags:'w'});
+        const stream = fs.createWriteStream(path.join(fullUploadDir, filenameToWrite), {flags:'w'});
         for (let i = 1; i < maxPart; i++) {
-            fileToRead = path.join(tempDir, (deviceId + "." + id + "." + i.toString()));
+            const fileToRead = path.join(tempDir, (deviceId + "." + id + "." + i.toString()));
             context.log.info(`reading file: ${fileToRead}`);
-            let chunk = fs.readFileSync(fileToRead).toString();
-            let buff = Buffer.from(chunk, 'base64');
+            const chunk = fs.readFileSync(fileToRead).toString();
+            const buff = Buffer.from(chunk, 'base64');
             let dataBuff = null;
             if (compression == "deflate") {
                 dataBuff = zlib.inflateSync(buff);
             } else {
                 dataBuff = buff;
             }
-            // write out the rehydrated file 
-            context.log.info("writing out the file: " + filenameToWrite);
+            // write out the file chunk 
+            context.log.info("writing chunk out to file: " + filenameToWrite);
             stream.write(dataBuff);
         }
         stream.end();
 
         // clean up the message parts
+        await cleanupTempFiles(context, deviceId, id, confirmationFile, maxPart);
+    }
+
+    async function cleanupTempFiles(context, deviceId, id, confirmationFile, maxPart) {
         for (let i = 1; i <= maxPart; i++) {
             let fileToDelete = path.join(tempDir, (deviceId + "." + id + "." + i.toString()));
             if(i === maxPart) {
