@@ -12,8 +12,8 @@ from azure.iot.device import Message
 from azure.iot.device import exceptions
 
 # device settings - FILL IN YOUR VALUES HERE
-scope_id = "scope"
-group_symmetric_key = "key"
+scope_id = ""
+group_symmetric_key = ""
 
 # optional device settings - CHANGE IF DESIRED/NECESSARY
 provisioning_host = "global.azure-devices-provisioning.net"
@@ -81,6 +81,7 @@ def send_file(filename, upload_filepath, compress):
             status = 500
             break
 
+        # print(data_base64)
         payload = multipart_msg_schema.format(data_base64)
 
         if device_client and device_client.connected:
@@ -101,10 +102,6 @@ def send_file(filename, upload_filepath, compress):
             msg.custom_properties["filepath"] = upload_filepath # file path for the final file, the path will be appended to the base recievers path
             msg.custom_properties["part"] = str(part)  # part N to track ordring of the parts
             # msg.custom_properties["maxPart"] = str(max_parts);   # maximum number of parts in the set
-            compression_value = "none"
-            if compress:
-                compression_value = "deflate"
-            msg.custom_properties["compression"] = compression_value;   # use value 'deflate' for compression or 'none'/remove this property for no compression
             
             try:
                 device_client.send_message(msg)
@@ -120,7 +117,6 @@ def send_file(filename, upload_filepath, compress):
     file_size_kb = math.ceil(f.tell() / 1024)
     f.close()
     
-    part = part + 1 
     # send a file transfer status message to IoT Central over MQTT
     
     payload = f'{{"filename": "{filename}", "filepath": "{upload_filepath}", "status": {status}, "message": "{status_message}", "size": {file_size_kb}}}'
@@ -136,6 +132,10 @@ def send_file(filename, upload_filepath, compress):
     msg.custom_properties["filepath"] = upload_filepath # file path for the final file, the path will be appended to the base recievers path
     msg.custom_properties["part"] = str(part)   # part N to track ordring of the parts
     msg.custom_properties["maxPart"] = str(part)  # track the total number of parts in the multi part message
+    compression_value = "none"
+    if compress:
+        compression_value = "deflate"
+    msg.custom_properties["compression"] = compression_value;   # use value 'deflate' for compression or 'none'/remove this property for no compression
 
     device_client.send_message(msg)
     print("completed sending file transfer status message")

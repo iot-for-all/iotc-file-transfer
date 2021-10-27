@@ -77,13 +77,24 @@ module.exports = async function (context, req) {
         }
 
         // log new file part
-        context.log.info("device-id: " + deviceId + " file-id: " + id + " part: " + part + " of: " + maxPart.toString() + " filepath: " + filepath + " filename: " + filename);
-
+        context.log.info("device-id: " + deviceId + " file-id: " + id + " part: " + part + " filepath: " + filepath + " filename: " + filename);
+        let confirmationFile = path.join(tempDir, (deviceId + "." + id + ".confirm"));
         // write out the file part if it is not the confirmation message
         if(maxPart === 0) {
             context.log.info('writing file');
             fs.writeFileSync(path.join(tempDir, (deviceId + "." + id + "." + part)), req.body.telemetry.data);
             context.log.info('write complete');
+
+            if(fs.existsSync(confirmationFile)){
+                let confirmData = fs.readFileSync(confirmationFile, {encoding:'utf8', flag:'r'});
+                context.log.info(`confirmation file read: ${confirmData}`);
+                confrimDataParsed = JSON.parse(confirmData);
+
+                let filePartCount = glob.sync(path.join(tempDir, (deviceId + "." + id + ".*"))).length;
+                if (filePartCount === confrimDataParsed.maxPart) {
+                    await aggregateChunks(context, deviceId, id, confrimDataParsed.maxPart, confrimDataParsed.compression, filepath, filename, confirmationFile);
+                }
+            }
         } else {
             context.log.info('processing final message');
             if ("compression" in req.body.messageProperties) {
@@ -95,62 +106,16 @@ module.exports = async function (context, req) {
                 throw "Missing message property: compression";
             }
 
+            context.log.info('writing file');
+            fs.writeFileSync(confirmationFile, JSON.stringify({maxPart, compression}));
+            context.log.info('write complete');
+
             // check to see if all the file parts are available
             let filePartCount = glob.sync(path.join(tempDir, (deviceId + "." + id + ".*"))).length;
-            if (filePartCount === (maxPart - 1)) {
-                // all expected file parts are available - time to rehydrate the file
-                // let encodedData = "";
-                for (let i = 1; i < maxPart; i++) {
-                    fileToRead = path.join(tempDir, (deviceId + "." + id + "." + i.toString()));
-                    context.log.info(`reading file: ${fileToRead}`);
-                    let chunk = fs.readFileSync(fileToRead);
-                    // encodedData = encodedData + chunk;
-                    let buff = Buffer.from(chunk, 'base64');
-                    let dataBuff = null;
-                    if (compression == "deflate") {
-                        dataBuff = zlib.inflateSync(buff);
-                    } else {
-                        dataBuff = buff;
-                    }
-
-                    // write out the rehydrated file 
-                    const fullUploadDir = path.join(uploadDir, filepath);
-                    if (!fs.existsSync(fullUploadDir)) {
-                        fs.mkdirSync(fullUploadDir, { recursive: true });
-                    }
-                    if (fs.existsSync(path.join(fullUploadDir, filename))) {
-                        // create a revision number between filename and extension
-                        ext = path.extname(filename);
-                        filename = filename.split('.').slice(0, -1).join('.');
-                        let filesExistingCount = glob.sync(path.join(fullUploadDir, (filename + ".**" + ext))).length;
-                        filename = filename + "." + (filesExistingCount + 1).toString() + ext;
-                    }
-                    context.log.info("writing out the file: " + filename);
-                    fs.writeFileSync(path.join(fullUploadDir, filename), dataBuff, {flag: 'as'});
-                }
-
-                // clean up the message parts
-                for (let i = 1; i <= maxPart; i++) {
-                    try {
-                        fs.unlinkSync(path.join(tempDir, (deviceId + "." + id + "." + i.toString())));
-                    } catch(e) {
-                        // pause and try this again incase there was a delay in releasing the file lock
-                        try {
-                            context.log.warn("Failure whilst cleaning up a temporary file retrying: " + path.join(tempDir, (deviceId + "." + id + "." + i.toString())));
-                            await new Promise((resolve) => {
-                                setTimeout(() => {
-                                    fs.unlinkSync(path.join(tempDir, (deviceId + "." + id + "." + i.toString())));
-                                    return resolve();
-                                }, 1000);    
-                            });
-                        } catch(e) {
-                            // failed a second time so log the error, the file will be caught and dead lettered at a later time
-                            context.log.error("Error whilst cleaning up a temporary file: " + path.join(tempDir, (deviceId + "." + id + "." + i.toString())));
-                        }
-                    }
-                }
+            if (filePartCount === maxPart) {
+                await aggregateChunks(context, deviceId, id, maxPart, compression, filepath, filename, confirmationFile);
             } else {
-                throw `Missing message part. received ${filePartCount}, expected ${maxPart-1}`;
+                context.log.warn(`Missing message part. received ${filePartCount}, expected ${maxPart}`);
             }
         }
         
@@ -182,5 +147,69 @@ module.exports = async function (context, req) {
             body: error_message
         };
         context.done();
+    }
+
+    async function aggregateChunks(context, deviceId, id, maxPart, compression, filepath, filename, confirmationFile) {
+         // all expected file parts are available - time to rehydrate the file
+        // let encodedData = "";
+        context.log.info('all chunks in temp storage. Reassembling.');
+        const fullUploadDir = path.join(uploadDir, filepath);
+        if (!fs.existsSync(fullUploadDir)) {
+            context.log.warn('filepath does not exist. creating...');
+            fs.mkdirSync(fullUploadDir, { recursive: true });
+        }
+        let filenameToWrite = filename;
+        if (fs.existsSync(path.join(fullUploadDir, filename))) {
+            context.log.warn('file exists. creating revision');
+            // create a revision number between filename and extension
+            ext = path.extname(filename);
+            filenameToWrite = filename.split('.').slice(0, -1).join('.');
+            let filesExistingCount = glob.sync(path.join(fullUploadDir, (filenameToWrite + ".**" + ext))).length;
+            filenameToWrite = filenameToWrite + "." + (filesExistingCount + 1).toString() + ext;
+        }
+
+        context.log.info('creating and writing file stream');
+        var stream = fs.createWriteStream(path.join(fullUploadDir, filenameToWrite), {flags:'w'});
+        for (let i = 1; i < maxPart; i++) {
+            fileToRead = path.join(tempDir, (deviceId + "." + id + "." + i.toString()));
+            context.log.info(`reading file: ${fileToRead}`);
+            let chunk = fs.readFileSync(fileToRead).toString();
+            let buff = Buffer.from(chunk, 'base64');
+            let dataBuff = null;
+            if (compression == "deflate") {
+                dataBuff = zlib.inflateSync(buff);
+            } else {
+                dataBuff = buff;
+            }
+            // write out the rehydrated file 
+            context.log.info("writing out the file: " + filenameToWrite);
+            stream.write(dataBuff);
+        }
+        stream.end();
+
+        // clean up the message parts
+        for (let i = 1; i <= maxPart; i++) {
+            let fileToDelete = path.join(tempDir, (deviceId + "." + id + "." + i.toString()));
+            if(i === maxPart) {
+                fileToDelete = confirmationFile;
+            }
+            try {
+                fs.unlinkSync(fileToDelete);
+            } catch(e) {
+                // pause and try this again incase there was a delay in releasing the file lock
+                try {
+                    context.log.warn("Failure whilst cleaning up a temporary file retrying: " + path.join(tempDir, (deviceId + "." + id + "." + i.toString())));
+                    await new Promise((resolve) => {
+                        setTimeout(() => {
+                            fs.unlinkSync(fileToDelete);
+                            return resolve();
+                        }, 1000);    
+                    });
+                } catch(e) {
+                    // failed a second time so log the error, the file will be caught and dead lettered at a later time
+                    context.log.error("Error whilst cleaning up a temporary file: " + path.join(tempDir, (deviceId + "." + id + "." + i.toString())));
+                }
+            }
+        }
     }
 }
