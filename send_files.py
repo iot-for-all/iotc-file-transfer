@@ -12,8 +12,8 @@ from azure.iot.device import Message
 from azure.iot.device import exceptions
 
 # device settings - FILL IN YOUR VALUES HERE
-scope_id = "<scope id for IoT Central Application>"
-group_symmetric_key = "<Group SAS key for IoT Central Application>"
+scope_id = "<insert scope id>"
+group_symmetric_key = "<insert symmetric key>"
 
 # optional device settings - CHANGE IF DESIRED/NECESSARY
 provisioning_host = "global.azure-devices-provisioning.net"
@@ -27,7 +27,9 @@ terminate = False
 trying_to_connect = False
 max_connection_attempt = 3
 verbose_logging = False
-
+max_msg_size = 255 * 1024
+encoding_size_multiplier = 0.75
+compress_size_multipler = 0.05
 multipart_msg_schema = '{{"data": "{}"}}'
 
 # derives a symmetric device key for a device id using the group symmetric key
@@ -38,39 +40,45 @@ def derive_device_key(device_id, group_symmetric_key):
     device_key_encoded = base64.b64encode(signed_hmac.digest())
     return device_key_encoded.decode("utf-8")
 
+def read_file_in_chunks(file, size):
+    while True:
+        data_chunk = file.read(size)
+        if not data_chunk:
+            break
+        yield data_chunk
+
+
 # Send a file over the IoT Hub transport to IoT Central
 def send_file(filename, upload_filepath, compress):
     f = open(filename, "rb")
-    data = f.read()
-    file_size_kb = len(data) / 1024
-    f.close()
-
-    # decide if to compress the data using zlib deflate
-    if compress:
-        data_compressed = zlib.compress(data)
-    else:
-        data_compressed = data
-
-    # encode the data with base64 for transmission as a JSON string
-    data_base64 = base64.b64encode(data_compressed).decode("ASCII")
-
-    max_msg_size = 255 * 1024
-    msg_template_size = len(multipart_msg_schema)
-    max_content_size = max_msg_size - msg_template_size
-    
-    max_parts = int(math.ceil(len(data_base64) / max_content_size))
-    file_id = uuid.uuid4()
-    part = 1
-    index = 0
-
     # chunk the file payload into 255KB chunks to send to IoT central over MQTT (could also be AMQP or HTTPS)
     status = 200
     status_message = "completed"
-    for i in range(max_parts):
-        data_chunk = data_base64[index:index + max_content_size]
-        index = index + max_content_size
+    part = 1
+    file_id = uuid.uuid4()
+    msg_template_size = len(multipart_msg_schema)
+    max_content_size = max_msg_size - msg_template_size
+    # When encoding to base64, payload size grows by ~4/3.
+    # When using zlib compression, it's possible it can't compress at all, but still adds overhead of compression metadata.
+    # Need to account for both of these factors when determining payload size.
+    multiplier = encoding_size_multiplier - compress_size_multipler if compress else encoding_size_multiplier
+    chunk_size_kb = math.floor(max_content_size * multiplier)
 
-        payload = multipart_msg_schema.format(data_chunk)
+    for data_chunk in read_file_in_chunks(f, chunk_size_kb):
+        # decide if to compress the data using zlib deflate
+        if compress:
+            data_compressed = zlib.compress(data_chunk)
+        else:
+            data_compressed = data_chunk
+
+        data_base64 = base64.b64encode(data_compressed).decode("ASCII")
+        if(len(data_base64) > max_content_size):
+            status_message = "encoded chunk size greater than max allowed size"
+            print(status_message)
+            status = 500
+            break
+
+        payload = multipart_msg_schema.format(data_base64)
 
         if device_client and device_client.connected:
             if verbose_logging:
@@ -81,19 +89,14 @@ def send_file(filename, upload_filepath, compress):
             msg = Message(payload)
             
             # standard message properties
-            msg.content_type = "application/json";  # when we support binary payload this should be changed to application/octet-stream
-            msg.content_encoding = "utf-8"; # encoding for the payload utf-8 for JSON and can be left off for binary data
+            msg.content_type = "application/json"  # when we support binary payload this should be changed to application/octet-stream
+            msg.content_encoding = "utf-8" # encoding for the payload utf-8 for JSON and can be left off for binary data
 
             # custom message properties
-            msg.custom_properties["multipart-message"] = "yes";  # indicates this is a multi-part message that needs special processing
-            msg.custom_properties["id"] = file_id;   # unique identity for the multi-part message we suggest using a UUID
-            msg.custom_properties["filepath"] = upload_filepath; # file path for the final file, the path will be appended to the base recievers path
-            msg.custom_properties["part"] = str(part);   # part N to track ordring of the parts
-            msg.custom_properties["maxPart"] = str(max_parts);   # maximum number of parts in the set
-            compression_value = "none"
-            if compress:
-                compression_value = "deflate"
-            msg.custom_properties["compression"] = compression_value;   # use value 'deflate' for compression or 'none'/remove this property for no compression
+            msg.custom_properties["multipart-message"] = "yes"  # indicates this is a multi-part message that needs special processing
+            msg.custom_properties["id"] = file_id  # unique identity for the multi-part message we suggest using a UUID
+            msg.custom_properties["filepath"] = upload_filepath # file path for the final file, the path will be appended to the base recievers path
+            msg.custom_properties["part"] = str(part)  # part N to track ordring of the parts
             
             try:
                 device_client.send_message(msg)
@@ -102,20 +105,34 @@ def send_file(filename, upload_filepath, compress):
                 status_message = "Received exception during send_message. Exception: " + err
                 print(status_message)
                 status = 500
+                break
             
         part = part + 1
 
-    # send a file transfer status message to IoT Central over MQTT
+    file_size_kb = math.ceil(f.tell() / 1024)
+    f.close()
+    
+    # send a file transfer confirmation message to IoT Central over MQTT
     payload = f'{{"filename": "{filename}", "filepath": "{upload_filepath}", "status": {status}, "message": "{status_message}", "size": {file_size_kb}}}'
+    print("Start sending final message part")
     msg = Message(payload)
             
     # standard message properties
-    msg.content_type = "application/json";  # when we support binary payload this should be changed to application/octet-stream
-    msg.content_encoding = "utf-8"; # encoding for the payload utf-8 for JSON and can be left off for binary data
+    msg.content_type = "application/json"  # when we support binary payload this should be changed to application/octet-stream
+    msg.content_encoding = "utf-8" # encoding for the payload utf-8 for JSON and can be left off for binary data
+
+    msg.custom_properties["multipart-message"] = "yes"  # indicates this is a multi-part message that needs special processing
+    msg.custom_properties["id"] = file_id  # unique identity for the multi-part message we suggest using a UUID
+    msg.custom_properties["filepath"] = upload_filepath # file path for the final file, the path will be appended to the base recievers path
+    msg.custom_properties["part"] = str(part)   # part N to track ordring of the parts
+    msg.custom_properties["maxPart"] = str(part)  # track the total number of parts in the multi part message
+    compression_value = "none"
+    if compress:
+        compression_value = "deflate"
+    msg.custom_properties["compression"] = compression_value;   # use value 'deflate' for compression or 'none'/remove this property for no compression
 
     device_client.send_message(msg)
     print("completed sending file transfer status message")
-
 
 # connect is not optimized for caching the IoT Hub hostname so all connects go through Device Provisioning Service (DPS)
 # a strategy here would be to try just the hub connection using a cached IoT Hub hostname and if that fails fall back to a full DPS connect
@@ -172,10 +189,10 @@ def main():
         local_upload_dir = "./sample-upload-files/"
 
         # send an mp4 video file with compression
-        send_file(local_upload_dir + "video.mp4", "myDevice\\video\\video.mp4", True)
+        send_file(local_upload_dir + "video.mp4", "myDevice/video/video.mp4", True)
 
         # send a pdf file with compression
-        send_file(local_upload_dir + "large-pdf.pdf", "myDevice\\pdf\\large-pdf.pdf", True) # 10,386KB
+        send_file(local_upload_dir + "large-pdf.pdf", "myDevice/pdf/large-pdf.pdf", True) # 10,386KB
 
         # send a jpg file without compression
         send_file(local_upload_dir + "4k-image.jpg", "myDevice/images/4k-image.jpg", False) # 3,914KB
