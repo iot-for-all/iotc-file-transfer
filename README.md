@@ -69,12 +69,12 @@ Because the payload might contain binary data the payload should be converted to
 <li> Compress the large data payload to be sent (optional) </li>
 <li> Base64 convert the data from step 1 </li>
 <li> Chunk the data from step 2 into 255KB parts </li>
-<li> Form an Azure IoT message payload from each chunk and apply the necessary standard and custom properties appropriatly </li>
-<li> Send the message to Azure IoT central </li>
+<li> Form an Azure IoT message payload from each chunk and apply the necessary standard and custom properties appropriately </li>
+<li> Send the message to Azure IoT Central </li>
 <li> Repeat steps 4 and 5 until all the chunks have been sent </li>
 </ol>
 
-Once the final chunk has been sent you can optionally send a confirmation message to IoT Cnetral indicating that a large payload has been sent.  The format of this message is defined using this DTDLv2 interface:
+Once the final chunk has been sent you can optionally send a confirmation message to IoT Central indicating that a large payload has been sent.  The format of this message is defined using this DTDLv2 interface:
 
 ```
   {
@@ -163,7 +163,7 @@ An example of the payload would look like this:
 
 ### From the cloud side
 
-The payloads marked with the custom message property of multipart-message=yes are handled using IoT centrals Continuous Data Export (CDE) feature.  By creating a CDE export that filters on the message property 'multipart-message' equals 'yes' all payloads matching this will be actioned by this data export.
+The payloads marked with the custom message property of multipart-message=yes are handled using IoT Central's Continuous Data Export (CDE) feature.  By creating a CDE export that filters on the message property 'multipart-message' equals 'yes' all payloads matching this will be actioned by this data export.
 
 ![CDE UX for file transfer](./assets/images/cde.png)
 
